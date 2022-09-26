@@ -1,0 +1,73 @@
+name: uniphore/product-engineering/connectors/raisr-adapter
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: "${{ github.ref }}"
+  cancel-in-progress: true
+jobs:
+  mvn-build:
+    runs-on: ubuntu-latest
+    container:
+      image: maven:latest
+    timeout-minutes: 60
+    env:
+      MAVEN_OPTS: "-Dhttps.protocols=TLSv1.2 -Dmaven.repo.local=${{ github.workspace }}/.m2/repository -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=WARN -Dorg.slf4j.simpleLogger.showDateTime=true -Djava.awt.headless=true"
+      MAVEN_CLI_OPTS: "--batch-mode --errors --fail-at-end --show-version -DinstallAtEnd=true -DdeployAtEnd=true"
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 50
+        lfs: true
+    - uses: actions/cache@v2
+      with:
+        path: ".m2/repository"
+        key: default
+    - run: export PATH=/opt/apache-maven/bin:$PATH
+    - run: mvn install -DskipTests
+  test-junit:
+    needs: mvn-build
+    runs-on: ubuntu-latest
+    container:
+      image: maven:latest
+    timeout-minutes: 60
+    env:
+      MAVEN_OPTS: "-Dhttps.protocols=TLSv1.2 -Dmaven.repo.local=${{ github.workspace }}/.m2/repository -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=WARN -Dorg.slf4j.simpleLogger.showDateTime=true -Djava.awt.headless=true"
+      MAVEN_CLI_OPTS: "--batch-mode --errors --fail-at-end --show-version -DinstallAtEnd=true -DdeployAtEnd=true"
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 50
+        lfs: true
+    - uses: actions/cache@v2
+      with:
+        path: ".m2/repository"
+        key: default
+    - run: export PATH=/opt/apache-maven/bin:$PATH
+    - run: mvn test
+  docker-build-deploy:
+    needs: test-junit
+    runs-on: ubuntu-latest
+    container:
+      image: docker:19.03.12
+    timeout-minutes: 60
+    services:
+      docker:19.03.12-dind:
+        image: docker:19.03.12-dind
+    env:
+      MAVEN_OPTS: "-Dhttps.protocols=TLSv1.2 -Dmaven.repo.local=${{ github.workspace }}/.m2/repository -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=WARN -Dorg.slf4j.simpleLogger.showDateTime=true -Djava.awt.headless=true"
+      MAVEN_CLI_OPTS: "--batch-mode --errors --fail-at-end --show-version -DinstallAtEnd=true -DdeployAtEnd=true"
+      IMAGE_TAG: "$CI_REGISTRY_IMAGE:${{ github.ref }}"
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 50
+        lfs: true
+    - uses: actions/cache@v2
+      with:
+        path: ".m2/repository"
+        key: default
+    - run: docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - run: docker build -t $IMAGE_TAG .
+    - run: docker push $IMAGE_TAG
